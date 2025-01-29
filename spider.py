@@ -29,6 +29,21 @@ async def fetch(session, url):
         print(f"Error fetching {url}: {e}")
         return None
 
+def extract_readable_content(html):
+    """Extracts readable content from HTML by filtering out non-essential tags."""
+    soup = BeautifulSoup(html, "html.parser")
+    
+    for script_or_style in soup(["script", "style", "header", "footer", "nav"]):
+        script_or_style.decompose()
+
+    content = []
+    for tag in soup.find_all(["p", "h1", "h2", "h3", "ul", "ol"]):
+        if tag.get_text(strip=True):  # Avoid empty strings
+            content.append(tag.get_text(strip=True))
+    
+    # Join the content into a single string
+    return "\n".join(content)
+
 async def get_links_and_images(html, base_url):
     """Extracts all valid links and images from a webpage."""
     soup = BeautifulSoup(html, "html.parser")
@@ -54,7 +69,9 @@ async def save_to_drive(data, file_name, mime_type):
 async def save_data(url, text, images, session):
     domain = urlparse(url).netloc.replace(".", "_")
     
-    await save_to_drive(text, f"{domain}_content.txt", "text/plain")
+    await save_to_drive(text, f"{domain}_content_raw.txt", "text/plain")
+    readable_content = extract_readable_content(text)
+    await save_to_drive(readable_content, f"{domain}_content_readable.txt", "text/plain")
     
     for img_url in images:
         img_name = os.path.basename(urlparse(img_url).path)
@@ -89,7 +106,7 @@ async def crawl(start_url, max_depth=2, visited=None, session=None):
     await asyncio.gather(*tasks)
 
 async def main():
-    start_url = "https://www.harvard.edu/"  
+    start_url = "https://www.harvard.edu/" 
     async with aiohttp.ClientSession() as session:
         await crawl(start_url, max_depth=2, visited=set(), session=session)
 
