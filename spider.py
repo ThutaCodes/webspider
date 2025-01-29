@@ -59,14 +59,19 @@ def extract_content(html):
     if images:
         content.append("Images: " + ", ".join(images))
 
-    media = [video.get("src") for video in soup.find_all("video", src=True)]
+    # Extract media (videos and audio)
+    media = []
+    for media_tag in soup.find_all(["video", "audio"], src=True):
+        media_url = media_tag.get("src")
+        if media_url and is_valid_url(media_url):
+            media.append(media_url)
+
     if media:
-        content.append("Videos: " + ", ".join(media))
+        content.append("Media: " + ", ".join(media))
 
     return "\n".join(content)
 
 async def get_links_and_images(html, base_url):
-    """Extracts valid links and images from the HTML."""
     soup = BeautifulSoup(html, "html.parser")
     links, images = set(), set()
     
@@ -103,6 +108,21 @@ async def save_data(url, content, session):
                 drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
         except Exception as e:
             print(f"Error downloading image {img_url}: {e}")
+
+    # Save media (videos, audios)
+    media_files = []
+    for media_url in content.split("Media: ")[-1].split(", "):
+        media_name = os.path.basename(urlparse(media_url).path)
+        try:
+            async with session.get(media_url) as media_resp:
+                media_data = await media_resp.read()
+                media_type = "video/mp4" if media_url.endswith(".mp4") else "audio/mp3"  # Adjust MIME type 
+                media_file = MediaIoBaseUpload(io.BytesIO(media_data), mimetype=media_type)
+                file_metadata = {"name": media_name, "parents": [DRIVE_FOLDER_ID]}
+                drive_service.files().create(body=file_metadata, media_body=media_file, fields="id").execute()
+                media_files.append(media_name)
+        except Exception as e:
+            print(f"Error downloading media {media_url}: {e}")
 
 async def crawl(start_url, max_depth=2, visited=None, session=None):
     if visited is None:
