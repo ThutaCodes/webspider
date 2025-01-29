@@ -3,7 +3,6 @@ import asyncio
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 import os
-import json
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -29,23 +28,45 @@ async def fetch(session, url):
         print(f"Error fetching {url}: {e}")
         return None
 
-def extract_readable_content(html):
-    """Extracts readable content from HTML by filtering out non-essential tags."""
+def extract_content(html):
+    """Extracts all meaningful content from HTML like titles, articles, links, images, etc."""
     soup = BeautifulSoup(html, "html.parser")
     
-    for script_or_style in soup(["script", "style", "header", "footer", "nav"]):
+    for script_or_style in soup(["script", "style", "header", "footer", "nav", "aside"]):
         script_or_style.decompose()
 
     content = []
-    for tag in soup.find_all(["p", "h1", "h2", "h3", "ul", "ol"]):
-        if tag.get_text(strip=True):  # Avoid empty strings
-            content.append(tag.get_text(strip=True))
-    
-    # Join the content into a single string
+
+    title = soup.find("title")
+    if title:
+        content.append(f"Title: {title.get_text(strip=True)}")
+
+    for header in soup.find_all(["h1", "h2", "h3"]):
+        content.append(f"Heading: {header.get_text(strip=True)}")
+
+    article = soup.find("article")
+    if article:
+        content.append(f"Article: {article.get_text(strip=True)}")
+    else:
+        for para in soup.find_all("p"):
+            content.append(f"Paragraph: {para.get_text(strip=True)}")
+
+    links = [a.get("href") for a in soup.find_all("a", href=True) if is_valid_url(a["href"])]
+    if links:
+        content.append("Links: " + ", ".join(links))
+
+    images = [img.get("src") for img in soup.find_all("img", src=True) if is_valid_url(img["src"])]
+    if images:
+        content.append("Images: " + ", ".join(images))
+
+    media = [video.get("src") for video in soup.find_all("video", src=True)]
+    if media:
+        content.append("Videos: " + ", ".join(media))
+
     return "\n".join(content)
 
 async def get_links_and_images(html, base_url):
-    """Extracts all valid links and images from a webpage."""
+    """Extracts valid links and images from the HTML."""
     soup = BeautifulSoup(html, "html.parser")
     links, images = set(), set()
     
@@ -66,13 +87,12 @@ async def save_to_drive(data, file_name, mime_type):
     media = MediaIoBaseUpload(io.BytesIO(data.encode("utf-8")), mimetype=mime_type)
     drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
 
-async def save_data(url, text, images, session):
+async def save_data(url, content, session):
     domain = urlparse(url).netloc.replace(".", "_")
     
-    await save_to_drive(text, f"{domain}_content_raw.txt", "text/plain")
-    readable_content = extract_readable_content(text)
-    await save_to_drive(readable_content, f"{domain}_content_readable.txt", "text/plain")
+    await save_to_drive(content, f"{domain}_content.txt", "text/plain")
     
+    links, images = await get_links_and_images(content, url)
     for img_url in images:
         img_name = os.path.basename(urlparse(img_url).path)
         try:
@@ -85,7 +105,6 @@ async def save_data(url, text, images, session):
             print(f"Error downloading image {img_url}: {e}")
 
 async def crawl(start_url, max_depth=2, visited=None, session=None):
-    """Recursively crawls web pages up to a max depth asynchronously."""
     if visited is None:
         visited = set()
     
@@ -99,9 +118,11 @@ async def crawl(start_url, max_depth=2, visited=None, session=None):
     if not html:
         return
     
-    links, images = await get_links_and_images(html, start_url)
-    await save_data(start_url, html, images, session)
+    content = extract_content(html)
     
+    await save_data(start_url, content, session)
+    
+    links, _ = await get_links_and_images(html, start_url)
     tasks = [crawl(link, max_depth - 1, visited, session) for link in links]
     await asyncio.gather(*tasks)
 
