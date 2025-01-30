@@ -34,7 +34,7 @@
 
 ## **Run It**  
 ```bash
-python3 web_spider.py  
+python3 spider.py  
 ```  
 
 Now, wait while it **crawls the web and throws everything into your Drive**.  
